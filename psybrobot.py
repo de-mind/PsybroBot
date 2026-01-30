@@ -4,17 +4,15 @@ import json
 import requests
 from datetime import datetime, timezone
 from urllib.parse import urlparse
-from typing import Optional, Dict, List
+from typing import Optional
 
 from fastapi import FastAPI, Request, Response
 from contextlib import asynccontextmanager
 import uvicorn
 
-from collections import Counter
-
 from telegram import Update
 from telegram.ext import (
-    Application, CommandHandler, MessageHandler, EditedMessageHandler, ContextTypes, filters
+    Application, CommandHandler, MessageHandler, ContextTypes, filters
 )
 
 import gspread
@@ -67,180 +65,6 @@ PLATFORM_HOSTS = {
     "appleMusic": {"apple.com", "music.apple.com"},
     "bandcamp": {"bandcamp.com"}
 }
-
-# ========================
-# APIs de metadata musical
-# ========================
-
-def get_musicbrainz_metadata(artist: str, title: str) -> Dict:
-    """Consulta MusicBrainz para obtener metadata musical."""
-    try:
-        # MusicBrainz API search
-        search_url = "https://musicbrainz.org/ws/2/recording/"
-        params = {
-            "query": f'artist:"{artist}" AND recording:"{title}"',
-            "fmt": "json",
-            "limit": 1
-        }
-        headers = {"User-Agent": "PsybroBot/1.0 (contact@example.com)"}  # Requerido por MusicBrainz
-        
-        resp = requests.get(search_url, params=params, headers=headers, timeout=5)
-        resp.raise_for_status()
-        data = resp.json()
-        
-        if data.get("recordings"):
-            recording = data["recordings"][0]
-            # MusicBrainz tiene año en el release
-            year = ""
-            if recording.get("releases"):
-                release_date = recording["releases"][0].get("date", "")
-                if release_date:
-                    year = release_date.split("-")[0]
-            
-            return {"year": year}
-    except Exception as e:
-        print(f"Error MusicBrainz: {e}")
-    return {}
-
-def get_spotify_metadata(url: str) -> Dict:
-    """Extrae metadata de Spotify Web API (año, BPM, tono)."""
-    try:
-        # Spotify requiere OAuth, pero podemos obtener info básica del track ID
-        # Nota: Para producción necesitas configurar Spotify API credentials
-        # Por ahora retornamos vacío o puedes implementar con credentials
-        pass
-    except Exception:
-        pass
-    return {}
-
-def get_discogs_metadata(artist: str, title: str) -> Dict:
-    """Consulta Discogs para obtener año de release."""
-    try:
-        search_url = "https://api.discogs.com/database/search"
-        params = {
-            "artist": artist,
-            "track": title,
-            "type": "release"
-        }
-        headers = {"User-Agent": "PsybroBot/1.0"}
-        
-        resp = requests.get(search_url, params=params, headers=headers, timeout=5)
-        resp.raise_for_status()
-        data = resp.json()
-        
-        if data.get("results"):
-            result = data["results"][0]
-            return {"year": str(result.get("year", ""))}
-    except Exception as e:
-        print(f"Error Discogs: {e}")
-    return {}
-
-def get_tunebat_metadata(artist: str, title: str) -> Dict:
-    """Consulta base de datos de Tunebat para BPM y Key (requiere scraping o API si disponible)."""
-    # Tunebat no tiene API pública gratuita, requeriría scraping
-    # Por ahora dejamos placeholder
-    return {}
-
-def get_getsongbpm_metadata(artist: str, title: str) -> Dict:
-    """Consulta GetSongBPM API para obtener BPM y Key."""
-    try:
-        # GetSongBPM tiene API pero requiere API key
-        # Placeholder para implementación futura
-        pass
-    except Exception:
-        pass
-    return {}
-
-def consolidate_metadata(metadata_list: List[Dict]) -> Dict:
-    """
-    Consolida metadata de múltiples fuentes priorizando consenso.
-    Si hay empate, se concatenan las opciones con 'ó'.
-    """
-    result = {}
-    
-    # Consolidar año
-    years = [m.get("year") for m in metadata_list if m.get("year")]
-    if years:
-        year_counts = Counter(years)
-        most_common = year_counts.most_common(2)
-        if len(most_common) == 1:
-            result["year"] = most_common[0][0]
-        elif len(most_common) > 1 and most_common[0][1] == most_common[1][1]:
-            # Empate
-            result["year"] = f"{most_common[0][0]} ó {most_common[1][0]}"
-        else:
-            result["year"] = most_common[0][0]
-    else:
-        result["year"] = ""
-    
-    # Consolidar BPM
-    bpms = [m.get("bpm") for m in metadata_list if m.get("bpm")]
-    if bpms:
-        bpm_counts = Counter(bpms)
-        most_common = bpm_counts.most_common(2)
-        if len(most_common) == 1:
-            result["bpm"] = most_common[0][0]
-        elif len(most_common) > 1 and most_common[0][1] == most_common[1][1]:
-            result["bpm"] = f"{most_common[0][0]} ó {most_common[1][0]}"
-        else:
-            result["bpm"] = most_common[0][0]
-    else:
-        result["bpm"] = ""
-    
-    # Consolidar Tono/Key
-    keys = [m.get("key") for m in metadata_list if m.get("key")]
-    if keys:
-        key_counts = Counter(keys)
-        most_common = key_counts.most_common(2)
-        if len(most_common) == 1:
-            result["key"] = most_common[0][0]
-        elif len(most_common) > 1 and most_common[0][1] == most_common[1][1]:
-            result["key"] = f"{most_common[0][0]} ó {most_common[1][0]}"
-        else:
-            result["key"] = most_common[0][0]
-    else:
-        result["key"] = ""
-    
-    return result
-
-async def get_enhanced_metadata(artist: str, title: str, url: str) -> Dict:
-    """
-    Obtiene metadata enriquecida consultando múltiples fuentes y consolidando resultados.
-    Retorna: Dict con keys: artist, title, album, year, key, bpm
-    """
-    # Primero intentamos song.link para datos básicos
-    songlink_data = get_songlink_metadata(url) or {}
-    
-    # Consultar múltiples fuentes para enriquecer
-    metadata_sources = []
-    
-    # Solo consultar si tenemos artist y title
-    if artist and title:
-        mb_data = get_musicbrainz_metadata(artist, title)
-        if mb_data:
-            metadata_sources.append(mb_data)
-        
-        discogs_data = get_discogs_metadata(artist, title)
-        if discogs_data:
-            metadata_sources.append(discogs_data)
-        
-        # Aquí puedes agregar más APIs cuando tengas credenciales
-        # spotify_data = get_spotify_metadata(url)
-        # tunebat_data = get_tunebat_metadata(artist, title)
-        # etc.
-    
-    # Consolidar metadata de todas las fuentes
-    consolidated = consolidate_metadata(metadata_sources)
-    
-    # Combinar con datos de song.link
-    return {
-        "artist": artist or songlink_data.get("artist", ""),
-        "title": title or songlink_data.get("title", ""),
-        "album": songlink_data.get("album", ""),
-        "year": consolidated.get("year", "") or songlink_data.get("year", ""),
-        "key": consolidated.get("key", ""),
-        "bpm": consolidated.get("bpm", "")
-    }
 
 # ========================
 # Utilidades generales
@@ -316,7 +140,8 @@ def ensure_headers_in_sheet(sheet_name: str):
         return
     first_row = ws.row_values(1)
     if [h.strip() for h in first_row] != HEADERS_MASTER:
-        ws.update(range_name="1:1", values=[HEADERS_MASTER])
+        ws.clear()
+        ws.append_row(HEADERS_MASTER, value_input_option=utils.ValueInputOption.raw)
 
 def ensure_columns(ws, required_cols):
     """Agrega columnas requeridas si faltan y actualiza encabezados."""
@@ -345,19 +170,7 @@ def row_exists_by_url_in_sheet(url: str, sheet_name: str) -> bool:
         CACHE_URLS_REGISTERED = url_set  # Actualiza cache
     return str(url).strip() in url_set
 
-def get_row_index_by_url(url: str, sheet_name: str) -> Optional[int]:
-    """Encuentra el índice de fila donde está registrada una URL específica."""
-    try:
-        ws = sh.worksheet(sheet_name)
-        urls = ws.col_values(8)  # Columna URL (índice 8)
-        for i, cell_url in enumerate(urls, start=2):  # Empezar desde fila 2 (después de headers)
-            if str(cell_url).strip() == str(url).strip():
-                return i
-    except gspread.WorksheetNotFound:
-        pass
-    return None
-
-def get_songlink_metadata(url: str) -> Dict:
+def get_songlink_metadata(url: str) -> dict:
     """Obtiene metadatos musicales de song.link priorizando plataformas más populares."""
     api_url = "https://api.song.link/v1-alpha.1/links"
     params = {"url": url}
@@ -399,39 +212,26 @@ async def append_row_to_sheet(sheet_name: str, row: list):
     """Agrega una fila a una hoja, asegurando encabezados y columnas requeridas."""
     ensure_headers_in_sheet(sheet_name)
     ws = sh.worksheet(sheet_name)
-    ensure_columns(ws, ["Álbum", "Año", "Tono", "BPM"])
+    ensure_columns(ws, ["Álbum", "Año"])
     ws.append_row(row, value_input_option=utils.ValueInputOption.raw)
-
-async def update_row_in_sheet(sheet_name: str, row_index: int, row: list):
-    """Actualiza una fila específica en una hoja de cálculo."""
-    try:
-        ws = sh.worksheet(sheet_name)
-        ensure_headers_in_sheet(sheet_name)
-        ensure_columns(ws, ["Álbum", "Año", "Tono", "BPM"])
-        ws.update(f"A{row_index}:{chr(64 + len(row))}{row_index}", [row], value_input_option=utils.ValueInputOption.raw)
-    except Exception as e:
-        print(f"Error actualizando fila en {sheet_name}: {e}")
 
 async def append_row(context: ContextTypes.DEFAULT_TYPE, update: Update, *, shared_by: str, source_chat: str,
                     artist: str, title: str, url: str, message_link: str, tags: str = "", notes: str = "",
-                    album: str = "", year: str = "", key: str = "", bpm: str = ""):
+                    album: str = "", year: str = ""):
     """Agrega una fila a Master y a las hojas correspondientes según etiquetas."""
     platform = detect_platform(url)
     ts = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
     row = [ts, shared_by, source_chat, message_link,
-        platform, artist, title, url, tags, notes, album, year, key, bpm]
+        platform, artist, title, url, tags, notes, album, year]
     row = [x if x is not None else "" for x in row]
-    
     if not row_exists_by_url_in_sheet(url, MASTER_SHEET):
         await append_row_to_sheet(MASTER_SHEET, row)
-    
     tags_list = tags.split() if tags else []
     # Early return: Si no hay tags extras, registrar en "Undefined"
     if not tags_list:
         if not row_exists_by_url_in_sheet(url, "Undefined"):
             await append_row_to_sheet("Undefined", row)
         return
-    
     for tag in tags_list:
         if tag and tag != "#ascucha":
             tag_name = tag.lstrip("#")
@@ -439,63 +239,6 @@ async def append_row(context: ContextTypes.DEFAULT_TYPE, update: Update, *, shar
                 sheet_name = tag_name[0].upper() + tag_name[1:].lower()
                 if not row_exists_by_url_in_sheet(url, sheet_name):
                     await append_row_to_sheet(sheet_name, row)
-
-    if not row_exists_by_url_in_sheet(url, "Undefined"):
-        await append_row_to_sheet("Undefined", row)
-
-async def sync_row_update(context: ContextTypes.DEFAULT_TYPE, update: Update, url: str):
-    """Sincroniza la actualización de un mensaje editado con todas las hojas relevantes."""
-    if not url:
-        return
-    
-    # Obtener nueva metadata del mensaje editado
-    basic_metadata = get_songlink_metadata(url) or {}
-    artist = basic_metadata.get("artist", "")
-    title = basic_metadata.get("title", "")
-    enhanced_metadata = await get_enhanced_metadata(artist, title, url)
-    
-    tags_raw = TAG_RE.findall((update.edited_message.text or "").lower())
-    tags = [t for t in tags_raw if t.lower() != "ascucha"]
-    tags_str = " ".join(f"#{t}" for t in tags) if tags else ""
-    notes_str = extract_notes(update.edited_message.text or "", "")
-    
-    new_row_data = [
-        datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),  # Nuevo timestamp
-        get_display_name(update.effective_user),
-        get_source_chat(update),
-        build_message_link(update),
-        detect_platform(url),
-        enhanced_metadata.get("artist", ""),
-        enhanced_metadata.get("title", ""),
-        url,
-        tags_str,
-        notes_str,
-        enhanced_metadata.get("album", ""),
-        enhanced_metadata.get("year", ""),
-        enhanced_metadata.get("key", ""),
-        enhanced_metadata.get("bpm", "")
-    ]
-    
-    # Actualizar Master sheet
-    master_row_idx = get_row_index_by_url(url, MASTER_SHEET)
-    if master_row_idx:
-        await update_row_in_sheet(MASTER_SHEET, master_row_idx, new_row_data)
-    
-    # Actualizar hojas por tags
-    tags_list = tags_str.split() if tags_str else []
-    for tag in tags_list:
-        if tag and tag != "#ascucha":
-            tag_name = tag.lstrip("#")
-            if tag_name:
-                sheet_name = tag_name[0].upper() + tag_name[1:].lower()
-                tag_row_idx = get_row_index_by_url(url, sheet_name)
-                if tag_row_idx:
-                    await update_row_in_sheet(sheet_name, tag_row_idx, new_row_data)
-    
-    # Actualizar Undefined si existe
-    undefined_row_idx = get_row_index_by_url(url, "Undefined")
-    if undefined_row_idx:
-        await update_row_in_sheet("Undefined", undefined_row_idx, new_row_data)
 
 # ========================
 # Handlers para telegram - comandos/chat
@@ -538,30 +281,15 @@ async def add_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     notes_str = extract_notes(text, "")
     if rest_urls:
         notes_str = (notes_str + " " + " ".join(rest_urls)).strip()
-
-    # Obtener metadata básica primero
-    basic_metadata = get_songlink_metadata(first_url) or {}
-    artist = basic_metadata.get("artist", "")
-    title = basic_metadata.get("title", "")
-    
-    # Obtener metadata enriquecida (año, tono, BPM)
-    enhanced_metadata = await get_enhanced_metadata(artist, title, first_url)
-    
+    metadata = get_songlink_metadata(first_url) or {}
     shared_by = get_display_name(update.effective_user)
     source_chat = get_source_chat(update)
     message_link = build_message_link(update)
-    
-    await append_row(context, update, 
-                    shared_by=shared_by, source_chat=source_chat,
-                    artist=enhanced_metadata.get("artist", ""), 
-                    title=enhanced_metadata.get("title", ""),
+    await append_row(context, update, shared_by=shared_by, source_chat=source_chat,
+                    artist=metadata.get("artist", ""), title=metadata.get("title", ""),
                     url=first_url, message_link=message_link,
                     tags=tags_str, notes=notes_str,
-                    album=enhanced_metadata.get("album", ""), 
-                    year=enhanced_metadata.get("year", ""),
-                    key=enhanced_metadata.get("key", ""),
-                    bpm=enhanced_metadata.get("bpm", ""))
-    
+                    album=metadata.get("album", ""), year=metadata.get("year", ""))
     if update.message:
         await update.message.reply_text("Anotado en Master ✅")
 
@@ -595,46 +323,14 @@ async def catch_links(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.message:
             await update.message.reply_text("Ya estaba registrado ✅ (duplicado por URL).")
         return
-
-    # Obtener metadata básica primero
-    basic_metadata = get_songlink_metadata(first_url) or {}
-    artist = basic_metadata.get("artist", "")
-    title = basic_metadata.get("title", "")
-    
-    # Obtener metadata enriquecida (año, tono, BPM)
-    enhanced_metadata = await get_enhanced_metadata(artist, title, first_url)
-    
-    await append_row(context, update, 
-                    shared_by=shared_by, source_chat=source_chat,
-                    artist=enhanced_metadata.get("artist", ""), 
-                    title=enhanced_metadata.get("title", ""),
+    metadata = get_songlink_metadata(first_url) or {}
+    await append_row(context, update, shared_by=shared_by, source_chat=source_chat,
+                    artist=metadata.get("artist", ""), title=metadata.get("title", ""),
                     url=first_url, message_link=message_link,
                     tags=tags_str, notes=notes_str,
-                    album=enhanced_metadata.get("album", ""), 
-                    year=enhanced_metadata.get("year", ""),
-                    key=enhanced_metadata.get("key", ""),
-                    bpm=enhanced_metadata.get("bpm", ""))
-    
+                    album=metadata.get("album", ""), year=metadata.get("year", ""))
     if update.message:
         await update.message.reply_text("Anotado en Master ✅")
-
-async def catch_edited_links(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler que captura EDICIONES de mensajes que contienen links precedidos por #ascucha."""
-    if ALLOWED_CHAT_ID and (not update.effective_chat or str(update.effective_chat.id) != str(ALLOWED_CHAT_ID)):
-        return
-    
-    text = (update.edited_message.text or "").lower()
-    ascucha_links = [m.group(1) for m in ASC_LINK_RE.finditer(text)]
-    
-    if ascucha_links:
-        # Procesar cada URL encontrada en la edición
-        for url in ascucha_links:
-            if row_exists_by_url_in_sheet(url, MASTER_SHEET):
-                await sync_row_update(context, update, url)
-                if update.edited_message:
-                    await update.edited_message.reply_text("✅ Actualizado en todas las hojas")
-                break  # Solo procesar la primera URL encontrada
-
 # ====================
 # FASTAPI + Telegram Application para webhooks con lifespan
 # ====================
@@ -649,11 +345,10 @@ async def init_telegram_app():
         telegram_app = Application.builder().token(BOT_TOKEN if BOT_TOKEN is not None else "").build()
         telegram_app.add_handler(CommandHandler("start", start))
         telegram_app.add_handler(CommandHandler("add", add_cmd))
-        telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, catch_links))  # Sin restricción de grupos
-        telegram_app.add_handler(EditedMessageHandler(filters.TEXT & ~filters.COMMAND, catch_edited_links))  # NUEVO: Handler para mensajes editados
+        telegram_app.add_handler(MessageHandler(filters.TEXT, catch_links))  # Sin restricción de grupos
         await telegram_app.initialize()
         await telegram_app.start()
-        print("✅ Bot inicializado correctamente (con soporte para ediciones)")
+        print("✅ Bot inicializado correctamente")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -674,6 +369,19 @@ async def lifespan(app: FastAPI):
 
 # Crear la aplicación FastAPI con lifespan
 app = FastAPI(lifespan=lifespan)
+
+@app.get("/webhook-info")
+async def webhook_info():
+    """Verifica el estado del webhook en Telegram."""
+    try:
+        import httpx
+        async with httpx.AsyncClient() as client:
+            url = f"https://api.telegram.org/bot{BOT_TOKEN}/getWebhookInfo"
+            response = await client.get(url)
+            return response.json()
+    except Exception as e:
+        return {"error": str(e)}
+
 
 @app.post("/webhook")
 async def webhook(request: Request):
@@ -699,7 +407,7 @@ async def webhook(request: Request):
 @app.get("/")
 async def root():
     """Endpoint de salud para verificar que el servicio está activo."""
-    return {"status": "Bot activo", "webhook": "/webhook", "features": ["add", "ascucha", "edited_messages"]}
+    return {"status": "Bot activo", "webhook": "/webhook"}
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
