@@ -2,6 +2,7 @@ import os
 import re
 import json
 import requests
+import httpx
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 from typing import Optional
@@ -350,11 +351,45 @@ async def init_telegram_app():
         await telegram_app.start()
         print("✅ Bot inicializado correctamente")
 
+async def setup_webhook(webhook_url: str):
+    """Configura el webhook en Telegram."""
+    import httpx
+    
+    # Primero elimina cualquier webhook anterior
+    async with httpx.AsyncClient() as client:
+        delete_url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook"
+        await client.get(delete_url)
+        
+        # Configura el nuevo webhook
+        set_url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook"
+        params = {
+            "url": webhook_url,
+            "allowed_updates": ["message", "edited_message"]  # Solo mensajes
+        }
+        response = await client.post(set_url, json=params)
+        result = response.json()
+        
+        if result.get("ok"):
+            print(f"✅ Webhook configurado: {webhook_url}")
+        else:
+            print(f"❌ Error configurando webhook: {result}")
+        
+        return result
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Gestión del ciclo de vida de la aplicación FastAPI."""
     # Startup - Inicialización
     await init_telegram_app()
+    print("🚀 FastAPI iniciado con bot de Telegram")
+
+        # AGREGAR: Configurar webhook
+    webhook_url = os.environ.get("WEBHOOK_URL")  # ej: https://tuapp.railway.app/webhook
+    if webhook_url:
+        await setup_webhook(webhook_url)
+    else:
+        print("⚠️ ADVERTENCIA: No se configuró WEBHOOK_URL")
+    
     print("🚀 FastAPI iniciado con bot de Telegram")
     
     yield  # Aquí la aplicación está activa
@@ -370,11 +405,11 @@ async def lifespan(app: FastAPI):
 # Crear la aplicación FastAPI con lifespan
 app = FastAPI(lifespan=lifespan)
 
+# Agrega endpoint para verificar el estado del webhook
 @app.get("/webhook-info")
 async def webhook_info():
     """Verifica el estado del webhook en Telegram."""
     try:
-        import httpx
         async with httpx.AsyncClient() as client:
             url = f"https://api.telegram.org/bot{BOT_TOKEN}/getWebhookInfo"
             response = await client.get(url)
@@ -382,7 +417,7 @@ async def webhook_info():
     except Exception as e:
         return {"error": str(e)}
 
-
+# Agrega endpoint para recibir eventos desde Telegram
 @app.post("/webhook")
 async def webhook(request: Request):
     """Endpoint webhook para recibir eventos desde Telegram."""
