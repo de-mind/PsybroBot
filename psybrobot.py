@@ -71,6 +71,26 @@ PLATFORM_HOSTS = {
 # Utilidades generales
 # ========================
 
+async def get_chat_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando para conocer el ID del chat actual."""
+    chat_id = update.effective_chat.id if update.effective_chat else "Desconocido"
+    user_id = update.effective_user.id if update.effective_user else "Desconocido"
+    
+    message = f"📍 **Info del Chat**\n"
+    message += f"Chat ID: `{chat_id}`\n"
+    message += f"User ID: `{user_id}`\n"
+    message += f"Tipo: {update.effective_chat.type if update.effective_chat else 'N/A'}\n"
+    
+    if ALLOWED_CHAT_ID:
+        message += f"\n🔒 Chat permitido: `{ALLOWED_CHAT_ID}`"
+        if str(chat_id) == str(ALLOWED_CHAT_ID):
+            message += " ✅"
+        else:
+            message += " ❌ (No coincide)"
+    
+    if update.message:
+        await update.message.reply_text(message, parse_mode="Markdown")
+
 def get_display_name(user) -> str:
     """Devuelve el username si existe, si no el nombre completo, si no vacío."""
     if not user:
@@ -345,6 +365,7 @@ async def init_telegram_app():
     if telegram_app is None:
         telegram_app = Application.builder().token(BOT_TOKEN if BOT_TOKEN is not None else "").build()
         telegram_app.add_handler(CommandHandler("start", start))
+        telegram_app.add_handler(CommandHandler("chatid", get_chat_id))  # NUEVO
         telegram_app.add_handler(CommandHandler("add", add_cmd))
         telegram_app.add_handler(MessageHandler(filters.TEXT, catch_links))  # Sin restricción de grupos
         await telegram_app.initialize()
