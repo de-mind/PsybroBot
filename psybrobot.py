@@ -469,3 +469,7 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
     print(f"✅ FastAPI iniciado en http://localhost:{port}")
+
+print(f"BOT_TOKEN: {'✅ Configurado' if BOT_TOKEN else '❌ Falta'}")
+print(f"ALLOWED_CHAT_ID: {ALLOWED_CHAT_ID if ALLOWED_CHAT_ID else 'No configurado (acepta todos)'}")
+print(f"WEBHOOK_URL: {os.environ.get('WEBHOOK_URL', '❌ NO CONFIGURADO')}")
